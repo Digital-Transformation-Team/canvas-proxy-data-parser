@@ -1,7 +1,13 @@
+import os
 import pandas as pd
 
-from constants import MATCHED_DATA_FILE, NO_GF_DATA_FILE
+from constants import GEN_DATA_FOLDER, MATCHED_DATA_FILE, NO_GF_DATA_FILE
 from models import Student
+
+
+def initialize():
+    if not os.path.exists(GEN_DATA_FOLDER):
+        os.mkdir(GEN_DATA_FOLDER)
 
 
 def replace_kazakh_chars(text: str) -> str:

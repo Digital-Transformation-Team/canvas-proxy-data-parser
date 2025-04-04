@@ -4,7 +4,12 @@ from constants import (
     IMAGE_DATA_FILE,
 )
 from models import Student, Image
-from utils import replace_kazakh_chars, save_matched_to_excel, save_unmatched_to_excel
+from utils import (
+    initialize,
+    replace_kazakh_chars,
+    save_matched_to_excel,
+    save_unmatched_to_excel,
+)
 
 
 def process_students() -> list[Student]:
@@ -76,6 +81,7 @@ def search_student_image(
 
 
 if __name__ == "__main__":
+    initialize()
     # service = get_service()
     # folder_id = get_target_folder_id(service, "gen_photos")
     # images = retrieve_photos(service, folder_id)
@@ -120,6 +126,3 @@ if __name__ == "__main__":
     print(
         f"Students with no gf: {len(no_gf_students)}. Total students: {len(students)}. With GF: {len(students) - len(no_gf_students)}"
     )
-
-    # for image_id in image_ids:
-    #     result = process_image(service=service, image_id=image_id)
