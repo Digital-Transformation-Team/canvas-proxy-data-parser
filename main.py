@@ -1,174 +1,125 @@
-from typing import Optional
 import pandas as pd
-from dataclasses import dataclass
-import io
-import os.path
-import tempfile
-from googleapiclient.http import MediaIoBaseDownload
-from google.auth.transport.requests import Request
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
-from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError
-
-# If modifying these scopes, delete the file token.json.
-SCOPES = [
-    "https://www.googleapis.com/auth/drive.metadata.readonly",
-    "https://www.googleapis.com/auth/drive.readonly",
-]
-
-
-@dataclass
-class Image:
-    name: str
-    id: str
-
-
-@dataclass
-class Student:
-    name: str
-    canvas_name: str
-    canvas_id: int
-    image_id: Optional[str] = None
-
-    def __repr__(self):
-        return f"Student {self.canvas_id}: {self.name}"
+from constants import (
+    EXCEL_DATA_FILE,
+    IMAGE_DATA_FILE,
+)
+from models import Student, Image
+from utils import replace_kazakh_chars, save_matched_to_excel, save_unmatched_to_excel
 
 
 def process_students() -> list[Student]:
-    file_path = "students.xls"
-    # Читаем Excel файл в pandas DataFrame
-    df = pd.read_excel(file_path)
+    df = pd.read_excel(EXCEL_DATA_FILE)
 
-    # Создаем список объектов Student, маппируя данные из DataFrame
     students = []
     for _, row in df.iterrows():
-        # Замаппим данные из столбцов на атрибуты Student
+        name = f"{row['Фамилия'].lower()} {row['Имя'].lower()} {row['Отчество'].lower() if isinstance(row['Отчество'], str) else ''}"
         student = Student(
-            name=f"{row['Фамилия']} {row['Имя']} {row['Отчество']}",
+            name=replace_kazakh_chars(name),
+            origin_name=name,
             canvas_name=row["Канвас"],
-            canvas_id=int(row["ID"]),  # Преобразуем в целое число
+            canvas_login=row["Логин"],
+            canvas_id=int(row["ID"]),
         )
         students.append(student)
 
     return students
 
 
-def process_image(image_id, service):
-    """Скачивает изображение по ID, обрабатывает его и удаляет временный файл"""
-
-    # Создаем временный файл без открытия его
-    with tempfile.NamedTemporaryFile(
-        delete=False, mode="wb", suffix=".jpg"
-    ) as temp_file:
-        temp_file_name = temp_file.name  # Получаем имя временного файла
-
-    # Скачиваем изображение в временный файл
-    request = service.files().get_media(fileId=image_id)
-    with io.FileIO(temp_file_name, "wb") as f:
-        downloader = MediaIoBaseDownload(f, request)
-        done = False
-        while done is False:
-            status, done = downloader.next_chunk()
-            print(f"Загружается: {int(status.progress() * 100)}%")
-
-    print("Обработанное изображение сохранено")
-
-    # Удаляем временные файлы
-    os.remove(temp_file_name)  # Удаляем временный файл
-
-    print(f"Временные файлы удалены: {temp_file_name}")
-
-
-def get_folder_id(service, folder_name):
-    """Находит ID папки по её названию"""
-    query = f"mimeType='application/vnd.google-apps.folder' and name='{folder_name}'"
-    results = service.files().list(q=query, fields="files(id, name)").execute()
-    folders = results.get("files", [])
-
-    if not folders:
-        print(f"❌ Папка '{folder_name}' не найдена!")
-        return None
-
-    folder_id = folders[0]["id"]
-    print(f"📂 Найден ID папки '{folder_name}': {folder_id}")
-    return folder_id
-
-
-def get_photos_in_folder(service, folder_id) -> list[Image]:
-    """Получает список фотографий в папке"""
-    query = f"'{folder_id}' in parents and mimeType contains 'image/'"
-    results = (
-        service.files().list(q=query, fields="files(id, name, mimeType)").execute()
-    )
-    photos = results.get("files", [])
-
-    if not photos:
-        print("📂 В папке нет изображений.")
-        return
-
-    print("🖼 Список фотографий в папке:")
-    image_ids = []
-    for photo in photos:
-        image = Image(name=photo["name"], id=photo["id"])
-        image_ids.append(image)
-    return image_ids
-
-
-def get_service():
-    """Shows basic usage of the Drive v3 API.
-    Prints the names and ids of the first 10 files the user has access to.
-    """
-    creds = None
-    # The file token.json stores the user's access and refresh tokens, and is
-    # created automatically when the authorization flow completes for the first
-    # time.
-    if os.path.exists("token.json"):
-        creds = Credentials.from_authorized_user_file("token.json", SCOPES)
-    # If there are no (valid) credentials available, let the user log in.
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
+def get_images_from_file(size: int = None) -> list[Image]:
+    images = []
+    with open(IMAGE_DATA_FILE, "r") as file:
+        lines = file.readlines()
+        if size is None:
+            for line in lines:
+                images.append(Image.from_str(line))
         else:
-            flow = InstalledAppFlow.from_client_secrets_file("credentials.json", SCOPES)
-            creds = flow.run_local_server(port=0)
-        # Save the credentials for the next run
-        with open("token.json", "w") as token:
-            token.write(creds.to_json())
-
-    try:
-        service = build("drive", "v3", credentials=creds)
-
-        return service
-    except HttpError as error:
-        # TODO(developer) - Handle errors from drive API.
-        print(f"An error occurred: {error}")
+            for i in range(size):
+                images.append(Image.from_str(lines[i]))
+    return images
 
 
-def get_student_image(student: Student, images: list[Image]) -> Image:
+def search_student_image(
+    student: Student, images: list[Image], prev_student_name: str = None
+) -> Image:
+    student_parts = set(student.name.lower().split())
+    best_match = None
+    best_match_score = 0
+
     for image in images:
+        image_parts = set(image.name.lower().split())
+
         if image.name.lower() == student.name.lower():
             return image
-    return None
+
+        common_parts = student_parts & image_parts
+        uncommon_parts = student_parts ^ image_parts
+        if len(common_parts) >= 2 and not uncommon_parts:
+            return image
+
+        # similarity_score = SequenceMatcher(
+        #     None, image.name.lower(), student.name.lower()
+        # ).ratio()
+        # if similarity_score > best_match_score:
+        #     best_match = image
+        #     best_match_score = similarity_score
+
+    # if best_match_score < 0.8 and prev_student_name:
+    #     for image in images:
+    #         similarity_score = SequenceMatcher(
+    #             None, image.name.lower(), prev_student_name.lower()
+    #         ).ratio()
+    #         if similarity_score > best_match_score:
+    #             best_match = image
+    #             best_match_score = similarity_score
+
+    return best_match
 
 
 if __name__ == "__main__":
-    service = get_service()
-    folder_id = get_folder_id(service, "gen_photos")
-    images = get_photos_in_folder(service, folder_id)
+    # service = get_service()
+    # folder_id = get_target_folder_id(service, "gen_photos")
+    # images = retrieve_photos(service, folder_id)
+    images = get_images_from_file(size=None)
     print(f"Найдено {len(images)} фото")
     students = process_students()
     print(f"Найдено {len(students)} студентов")
 
     # Compare images and students
-    counter = 0
-    for student in students:
+    image_student = {
+        k: v
+        for k, v in zip(
+            [image.origin_name for image in images], [None for _ in range(len(images))]
+        )
+    }
+    found_students: list[Student] = []
+    print(f"Found uniq {len(image_student.keys())} names")
+    for i, student in enumerate(students):
         # Find image for this student
-        image: Image = get_student_image(student, images)
+        progress = round(((i + 1) * 100) / len(students), 2)
+        print(f"Processing...: {progress}%")
+        image: Image = search_student_image(student, images)
         if image is not None:
-            counter += 1
-        # student.image_id = image.id
-    print(f"Found images for {counter} students. Total students: {len(students)}")
+            if image_student[image.origin_name] is None:
+                image_student[image.origin_name] = student.origin_name
+                student.image_id = image.id
+                found_students.append(student)
+
+    # print(f"Found images for {counter} students. Total students: {len(students)}")
+    no_gf_images = []
+    no_gf_students = set([student.origin_name for student in students])
+    for image, student in image_student.items():
+        if student is None:
+            no_gf_images.append(image)
+        else:
+            no_gf_students.remove(student)
+    save_matched_to_excel(students=found_students)
+    save_unmatched_to_excel(no_gf_images=no_gf_images, no_gf_students=no_gf_students)
+    print(
+        f"Images with no gf: {len(no_gf_images)}. Total images: {len(images)}. With GF: {len(images) - len(no_gf_images)}"
+    )
+    print(
+        f"Students with no gf: {len(no_gf_students)}. Total students: {len(students)}. With GF: {len(students) - len(no_gf_students)}"
+    )
 
     # for image_id in image_ids:
     #     result = process_image(service=service, image_id=image_id)
