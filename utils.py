@@ -1,3 +1,4 @@
+import numpy as np
 import os
 import pandas as pd
 
@@ -46,18 +47,46 @@ def save_unmatched_to_excel(no_gf_images, no_gf_students):
         df_students.to_excel(writer, sheet_name="no gf students", index=False)
 
 
-def save_matched_to_excel(students: list[Student]):
+def save_students_to_excel(students: list[Student], path: str = MATCHED_DATA_FILE):
     """Сохраняет ненайденные изображения и студентов в один Excel-файл на разные листы"""
 
     df_students = pd.DataFrame(
         {
             "Origin Name": [student.origin_name for student in students],
             "Image ID": [student.image_id for student in students],
+            "Image Vector": [student.image_vector for student in students],
             "Canvas Name": [student.canvas_name for student in students],
             "Canvas Login": [student.canvas_login for student in students],
             "Canvas ID": [student.canvas_id for student in students],
         }
     )
 
-    with pd.ExcelWriter(MATCHED_DATA_FILE, engine="xlsxwriter") as writer:
+    with pd.ExcelWriter(path, engine="xlsxwriter") as writer:
         df_students.to_excel(writer, sheet_name="Student data", index=False)
+
+
+def retrieve_students_from_excel() -> list[Student]:
+    df = pd.read_excel(MATCHED_DATA_FILE)
+
+    students = []
+    for _, row in df.iterrows():
+        image_vector = row.get("Image Vector")
+        if isinstance(image_vector, str):
+            try:
+                image_vector = image_vector.strip("[]")
+                image_vector = np.fromstring(image_vector, sep=" ")
+            except Exception as e:
+                raise e
+
+        student = Student(
+            name=row["Origin Name"],
+            origin_name=row["Origin Name"],
+            canvas_name=row["Canvas Name"],
+            canvas_login=row["Canvas Login"],
+            canvas_id=row["Canvas ID"],
+            image_id=row.get("Image ID"),
+            image_vector=image_vector,
+        )
+        students.append(student)
+
+    return students

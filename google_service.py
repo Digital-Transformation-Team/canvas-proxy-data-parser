@@ -1,3 +1,4 @@
+from contextlib import contextmanager
 import io
 import os.path
 import tempfile
@@ -69,6 +70,7 @@ def retrieve_photos(service, folder_id):
             )
 
             photos = results.get("files", [])
+            print(f"Найдено {len(photos)} фото")
             if not photos:
                 break  # Если файлов нет, прекращаем цикл
 
@@ -97,17 +99,46 @@ def retrieve_photos(service, folder_id):
     return image_ids
 
 
+@contextmanager
+def retrieve_single_photo_path(service, image_id: str):
+    temp_file_name = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            delete=False,
+            mode="wb",
+            suffix=".jpg",
+        ) as temp_file:
+            temp_file_name = temp_file.name
+        request = service.files().get_media(fileId=image_id)
+        with io.FileIO(temp_file_name, "wb") as f:
+            downloader = MediaIoBaseDownload(f, request)
+            done = False
+            while done is False:
+                _, done = downloader.next_chunk()
+
+        yield temp_file_name
+    except Exception as e:
+        raise e
+    finally:
+        if temp_file_name is not None:
+            if os.path.exists(temp_file_name):
+                os.remove(temp_file_name)
+
+
 def download_and_process_image(image_id, service):
     """Скачивает изображение по ID, обрабатывает его и удаляет временный файл"""
 
     # Создаем временный файл без открытия его
     with tempfile.NamedTemporaryFile(
-        delete=False, mode="wb", suffix=".jpg"
+        delete=False,
+        mode="wb",
+        suffix=".jpg",
     ) as temp_file:
-        temp_file_name = temp_file.name  # Получаем имя временного файла
+        temp_file_name = temp_file.name
 
     # Скачиваем изображение в временный файл
-    request = service.files().get_media(fileId=image_id)
+    # request = service.files().get_media(fileId=image_id)
+    request = service.files().get_media(fileId="1SaOJwXF_cRQU30w3_6-uqkWYnFaaRCkA")
     with io.FileIO(temp_file_name, "wb") as f:
         downloader = MediaIoBaseDownload(f, request)
         done = False
